@@ -1,0 +1,11 @@
+process.on('exit',(c)=>{console.log('EXIT:',c);console.trace('exit trace');});
+process.on('uncaughtException',(e)=>console.error('UNCAUGHT:',e));
+process.on('unhandledRejection',(r)=>console.error('REJECTION:',r));
+const http=require('http');
+const express=require('express');
+const app=express();
+app.get('/test',(req,res)=>res.send('ok'));
+const server=app.listen(5176,'0.0.0.0',()=>console.log('listening on 5176'));
+server.on('error',(e)=>console.error('SERVER ERROR:',e.message));
+console.log('after listen call');
+setTimeout(()=>console.log('alive 3s'),3000);
