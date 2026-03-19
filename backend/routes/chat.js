@@ -16,9 +16,15 @@ async function queryDatabase(sql) {
         if (!safe.startsWith('select')) {
             return 'Error: Only SELECT queries are allowed.';
         }
-        const res = await db.query(sql);
+        // Ensure feedback schema is used if not specified
+        let finalSql = sql;
+        if (!safe.includes('feedback.')) {
+            finalSql = sql.replace(/from\s+(\w+)/gi, 'FROM feedback.$1');
+        }
+        
+        const res = await db.query(finalSql);
         if (res.rows.length === 0) return 'No results found.';
-        return JSON.stringify(res.rows.slice(0, 100));
+        return JSON.stringify(res.rows.slice(0, 50));
     } catch (err) {
         return `Query error: ${err.message}`;
     }
@@ -28,12 +34,14 @@ async function queryDatabase(sql) {
 async function semanticSearch(query) {
     try {
         const keywords = query.split(/\s+/).filter(w => w.length > 3).slice(0, 5).map(w => `%${w}%`);
-        const conditions = keywords.map((_, i) => `(r.review_detail ILIKE $${i + 1} OR r.review_title ILIKE $${i + 1})`).join(' OR ');
-        const fallbackSql = conditions
-            ? `SELECT p.product_name, b.brand_name, r.review_detail AS complaint_text, r.sentiment, r.comment_category FROM feedback.reviews r JOIN feedback.products p ON r.product_id = p.product_id JOIN feedback.brands b ON r.brand_id = b.brand_id WHERE ${conditions} LIMIT 15`
-            : `SELECT p.product_name, b.brand_name, r.review_detail AS complaint_text, r.sentiment, r.comment_category FROM feedback.reviews r JOIN feedback.products p ON r.product_id = p.product_id JOIN feedback.brands b ON r.brand_id = b.brand_id LIMIT 15`;
-        const res = await db.query(fallbackSql, keywords);
-        if (res.rows.length === 0) return 'No matching reviews found for this topic.';
+        const conditions = keywords.map((_, i) => `(complaint_text ILIKE $${i + 1} OR complaint_category ILIKE $${i + 1})`).join(' OR ');
+        
+        const sql = conditions
+            ? `SELECT product_name, complaint_text, sentiment, complaint_category, date FROM feedback.complaints WHERE ${conditions} ORDER BY date DESC LIMIT 15`
+            : `SELECT product_name, complaint_text, sentiment, complaint_category, date FROM feedback.complaints ORDER BY date DESC LIMIT 15`;
+            
+        const res = await db.query(sql, keywords);
+        if (res.rows.length === 0) return 'No matching feedback found for this topic.';
         return JSON.stringify(res.rows);
     } catch (err) {
         return `Search error: ${err.message}`;
@@ -47,18 +55,15 @@ const toolDeclarations = [
             {
                 name: "query_database",
                 description: `Executes a read-only SQL SELECT query on the customer feedback database.
-Schema: feedback. Main tables:
-- feedback.reviews (r): review_id, product_id, brand_id, platform_id, comment_date, review_title, review_detail, comment_type, comment_category, sentiment ('Positive'/'Negative'), customer_name, source_sheet, source_file
-- feedback.products (p): product_id, product_name, brand_id, product_category
-- feedback.brands (b): brand_id, brand_name ('Blue Heaven', "Nature's Essence")
-- feedback.platforms: platform_id, platform_name ('Amazon', 'Nykaa')
-Always qualify table names with schema prefix 'feedback.' (e.g. feedback.reviews). Join products and brands for readable output.`,
+Main table: feedback.complaints
+Columns: id, product_name, product_category, complaint_text, complaint_category, sentiment ('Positive', 'Negative', 'Neutral'), sentiment_score (numeric), source, customer_name, customer_contact, date, order_id.
+Always use feedback.complaints in your queries.`,
                 parameters: {
                     type: "OBJECT",
                     properties: {
                         sql: {
                             type: "STRING",
-                            description: "The SQL SELECT query to execute. Always use feedback.tablename."
+                            description: "The SQL SELECT query to execute. e.g. SELECT product_name, COUNT(*) FROM feedback.complaints GROUP BY 1 ORDER BY 2 DESC LIMIT 10"
                         }
                     },
                     required: ["sql"]
@@ -66,7 +71,7 @@ Always qualify table names with schema prefix 'feedback.' (e.g. feedback.reviews
             },
             {
                 name: "semantic_search",
-                description: "Searches feedback.reviews using keyword matching on review text. Use for qualitative questions like 'what are customers saying about packaging' or 'show complaints about smell'.",
+                description: "Searches feedback text using keyword matching. Use for qualitative questions like 'what are customers saying about packaging' or 'show complaints about smell'.",
                 parameters: {
                     type: "OBJECT",
                     properties: {
@@ -84,31 +89,21 @@ Always qualify table names with schema prefix 'feedback.' (e.g. feedback.reviews
 
 const SYSTEM_INSTRUCTION = `You are Esme, an elite Data Scientist and Customer Intelligence Executive for Esme Beauty & Skincare.
 
-You have direct access to a PostgreSQL database. Use ONLY the feedback schema:
-- feedback.reviews: review_id, product_id, brand_id, platform_id, comment_date, review_title, review_detail, comment_type, comment_category, sentiment ('Positive'/'Negative'), customer_name, source_sheet, source_file
-- feedback.products: product_id, product_name, brand_id, product_category
-- feedback.brands: brand_id, brand_name ('Blue Heaven', "Nature's Essence")
-- feedback.platforms: platform_id, platform_name ('Amazon', 'Nykaa')
-Total reviews: ~15,375. Always JOIN products and brands for product names.
+You have direct access to a PostgreSQL database via the feedback.complaints table.
+Columns: product_name, product_category, complaint_text, complaint_category, sentiment, sentiment_score, source, date.
 
 RESPONSE FORMATTING (STRICT):
-1. ALWAYS start with a 1-2 sentence executive summary.
-2. ALWAYS USE MARKDOWN TABLES for any list of products, metrics, or comparisons. Never use plain bullet lists for tabular data.
+1. ALWAYS start with a 1-2 sentence executive summary of what you found.
+2. ALWAYS USE MARKDOWN TABLES for any lists or comparisons.
 3. USE HEADERS (##, ###) to organize sections: Summary, Breakdown, Key Insights, Recommendations.
-4. QUOTE CUSTOMERS: For qualitative questions, use > blockquotes with actual review_detail text from the DB.
-5. SENTIMENT: sentiment column values are exactly 'Positive' or 'Negative'. Use these exact strings in WHERE clauses.
-6. PERCENTAGES: Always show percentages alongside counts.
-7. NO FILLER: Skip greetings/sign-offs. Start immediately with data.
+4. QUOTE CUSTOMERS: For qualitative questions, use > blockquotes with actual complaint_text from the DB.
+5. NO FILLER: Skip greetings/sign-offs. Start immediately with data.
 
 HOW TO EXECUTE:
 - Step 1: Query aggregate counts to understand the landscape.
-- Step 2: For text analysis, retrieve actual review_detail and quote customers.
-- Step 3: Break down by brand, product, category, or platform as needed.
-- Step 4: End with 2-3 actionable recommendations in a numbered list.
-
-Example good queries:
-- SELECT p.product_name, COUNT(*) as total, SUM(CASE WHEN r.sentiment='Positive' THEN 1 ELSE 0 END) as positive FROM feedback.reviews r JOIN feedback.products p ON r.product_id=p.product_id GROUP BY p.product_name ORDER BY total DESC LIMIT 10
-- SELECT r.comment_category, COUNT(*) as cnt FROM feedback.reviews r GROUP BY r.comment_category ORDER BY cnt DESC`;
+- Step 2: For text analysis, retrieve actual complaint_text and quote customers.
+- Step 3: Break down by product or category as needed.
+- Step 4: End with 2-3 actionable recommendations.`;
 
 
 router.post('/', async (req, res) => {
@@ -120,14 +115,13 @@ router.post('/', async (req, res) => {
         const history = conversationHistory[threadId];
 
         const model = genAI.getGenerativeModel({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-2.0-flash',
             systemInstruction: SYSTEM_INSTRUCTION,
             tools: toolDeclarations,
         });
 
         const chat = model.startChat({ history });
 
-        // Prepend file context to message if provided
         const fullMessage = fileContext
             ? `[Attached file: ${fileContext.name}]\n\n${fileContext.content}\n\n---\nUser question: ${message}`
             : message;
@@ -135,7 +129,6 @@ router.post('/', async (req, res) => {
         let response = await chat.sendMessage(fullMessage);
         let responseCandidate = response.response;
 
-        // Agentic tool loop — keep calling tools until we get a final text
         let iterations = 0;
         while (responseCandidate.functionCalls() && responseCandidate.functionCalls().length > 0 && iterations < 5) {
             iterations++;
@@ -162,7 +155,6 @@ router.post('/', async (req, res) => {
 
         const finalText = responseCandidate.text();
 
-        // Update history
         history.push({ role: 'user', parts: [{ text: message }] });
         history.push({ role: 'model', parts: [{ text: finalText }] });
         if (history.length > 40) conversationHistory[threadId] = history.slice(-40);

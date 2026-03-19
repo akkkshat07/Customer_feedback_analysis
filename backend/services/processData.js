@@ -8,16 +8,62 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 require('dotenv').config();
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const embeddingModel = genAI.getGenerativeModel({ model: 'gemini-embedding-001' });
+const embeddingModel = genAI.getGenerativeModel({ model: 'text-embedding-004' });
+const flashModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
 const getEmbedding = async (text) => {
-    const result = await embeddingModel.embedContent(String(text));
-    return result.embedding.values;
+    if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY.includes('put your own')) return null;
+    try {
+        const result = await embeddingModel.embedContent(String(text));
+        return result.embedding.values;
+    } catch (err) {
+        console.error("Embedding generation failed:", err.message);
+        return null;
+    }
+};
+
+const getAISentimentAndCategory = async (text) => {
+    if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY.includes('put your own')) return null;
+    
+    const prompt = `
+    Analyze the following customer feedback for a beauty/skincare brand:
+    "${text}"
+    
+    Classify it into EXACTLY ONE of these categories:
+    - Packaging Issue
+    - Health/Allergy Issue
+    - Counterfeit Concern
+    - Product Performance
+    - Product Quality
+    - Smell Issue
+    - Damaged Product
+    - Late Delivery
+    - Wrong Item
+    - Printing & Labeling
+    - Customer Service
+    - Other
+    
+    Determine the sentiment: Positive, Negative, or Neutral.
+    Assign a sentiment score between -1.0 (very negative) and 1.0 (very positive).
+    
+    Respond in STRICT JSON format:
+    {"category": "Category Name", "sentiment": "Positive/Negative/Neutral", "score": 0.5}
+    `;
+
+    try {
+        const result = await flashModel.generateContent(prompt);
+        const response = await result.response;
+        let jsonStr = response.text().replace(/```json|```/g, '').trim();
+        return JSON.parse(jsonStr);
+    } catch (err) {
+        console.error("AI Analysis failed:", err.message);
+        return null;
+    }
 };
 
 const sentimentAnalyzer = new Sentiment();
 
-const categorizeComplaint = (text = '') => {
+const categorizeComplaintRegex = (text = '') => {
     const lowerText = String(text).toLowerCase();
 
     if (lowerText.match(/packag|box|wrapper|seal|blister|cap|container|bottle|tube|pump|leak|spray|short pack|theft/)) return 'Packaging Issue';
@@ -49,7 +95,6 @@ const normalizeRow = (row, source) => {
 
     let complaintText = getField(['complaint', 'review', 'issue', 'description', 'feedback', 'message', 'text', 'comment', 'query', 'reason', 'remark', 'chat', 'transcript', 'body', 'content', 'detail', 'msg']);
 
-    // Smart fallback: If we couldn't find a named column, the complaint is almost always the longest string in the row!
     if (!complaintText) {
         let longestText = '';
         for (const [key, value] of Object.entries(row)) {
@@ -106,13 +151,13 @@ const processFile = async (filePath, originalName, defaultSource) => {
         const fileContent = fs.readFileSync(filePath, 'utf8');
         rawData = parse(fileContent, {
             columns: true,
-            skip_empty_lines: true
+            skip_empty_lines: true,
+            bom: true
         });
     } else if (lowerName.endsWith('.xlsx') || lowerName.endsWith('.xls')) {
         const workbook = xlsx.readFile(filePath);
         for (const sheetName of workbook.SheetNames) {
             const sheetData = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName]);
-            // Tag each row with its source sheet name
             sheetData.forEach(row => row._sheetName = sheetName);
             rawData = rawData.concat(sheetData);
         }
@@ -120,12 +165,11 @@ const processFile = async (filePath, originalName, defaultSource) => {
 
     let summary = { TotalReceived: rawData.length, Ingested: 0, Ignored: 0, BySource: {}, BySentiment: {} };
 
-    // Fetch existing records to prevent duplicates
     let existingHashSet = new Set();
     try {
         const existingData = await db.query(`
             SELECT MD5(CONCAT(complaint_text, product_name)) as hash 
-            FROM complaints 
+            FROM feedback.complaints 
             WHERE complaint_text IS NOT NULL
         `);
         existingData.rows.forEach(r => existingHashSet.add(r.hash));
@@ -149,29 +193,30 @@ const processFile = async (filePath, originalName, defaultSource) => {
             continue;
         }
 
-        const category = categorizeComplaint(normalized.complaintText);
-
-        const sentimentResult = sentimentAnalyzer.analyze(String(normalized.complaintText));
-        const sentimentScore = sentimentResult.score;
-        let sentimentLabel = 'Neutral';
-        if (sentimentScore > 0) sentimentLabel = 'Positive';
-        else if (sentimentScore < 0) sentimentLabel = 'Negative';
-
-        let embeddingVector = null;
-        try {
-            embeddingVector = await getEmbedding(normalized.complaintText);
-        } catch (err) {
-            console.error("Embedding generation failed:", err.message);
+        // AI Analysis fallback to Regex/Sentiment.js
+        let category, sentimentLabel, sentimentScore;
+        const aiResult = await getAISentimentAndCategory(normalized.complaintText);
+        
+        if (aiResult) {
+            category = aiResult.category;
+            sentimentLabel = aiResult.sentiment;
+            sentimentScore = aiResult.score;
+        } else {
+            category = categorizeComplaintRegex(normalized.complaintText);
+            const sentimentResult = sentimentAnalyzer.analyze(String(normalized.complaintText));
+            sentimentScore = sentimentResult.score;
+            sentimentLabel = 'Neutral';
+            if (sentimentScore > 0) sentimentLabel = 'Positive';
+            else if (sentimentScore < 0) sentimentLabel = 'Negative';
         }
 
+        let embeddingVector = await getEmbedding(normalized.complaintText);
+
         const query = `
-            INSERT INTO complaints 
+            INSERT INTO feedback.complaints 
             (product_name, product_category, complaint_text, complaint_category, sentiment, sentiment_score, source, customer_name, customer_contact, date, order_id, embedding)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         `;
-
-        // pgvector expects the vector as a string: '[1.1, 2.2, ...]'
-        const embeddingString = embeddingVector ? JSON.stringify(embeddingVector) : null;
 
         const values = [
             normalized.productName,
@@ -185,7 +230,7 @@ const processFile = async (filePath, originalName, defaultSource) => {
             normalized.customerContact,
             normalized.date,
             normalized.orderId,
-            embeddingString
+            embeddingVector ? JSON.stringify(embeddingVector) : null
         ];
 
         try {
@@ -199,9 +244,9 @@ const processFile = async (filePath, originalName, defaultSource) => {
         }
     }
 
-    fs.unlinkSync(filePath);
+    try { fs.unlinkSync(filePath); } catch (e) {}
 
     return summary;
 };
 
-module.exports = { processFile, categorizeComplaint };
+module.exports = { processFile, categorizeComplaint: categorizeComplaintRegex };

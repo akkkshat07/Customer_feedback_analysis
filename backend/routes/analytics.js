@@ -3,101 +3,50 @@ const db = require('../db');
 
 const router = express.Router();
 
-// Shared SQL snippet: normalize raw comment_category into clean groups
-const CAT_NORMALIZE = (col) => `
-    CASE
-        WHEN LOWER(${col}) LIKE '%quality%' THEN 'Quality'
-        WHEN LOWER(${col}) LIKE '%packag%' OR LOWER(${col}) IN ('seal broken','blank bottle') THEN 'Packaging'
-        WHEN LOWER(${col}) LIKE '%price%' OR LOWER(${col}) IN ('affordable price','money') THEN 'Price'
-        WHEN LOWER(${col}) LIKE '%damage%' OR LOWER(${col}) LIKE '%broken%' OR LOWER(${col}) IN ('broken','expired product','used product','wrong content','wrong product') THEN 'Damage / Defective'
-        WHEN LOWER(${col}) LIKE '%deliver%' THEN 'Delivery'
-        WHEN LOWER(${col}) LIKE '%manufactur%' THEN 'Manufacturing'
-        WHEN LOWER(${col}) LIKE '%quant%' THEN 'Quantity'
-        WHEN LOWER(${col}) LIKE '%shade%' OR LOWER(${col}) LIKE '%color%' OR LOWER(${col}) LIKE '%colour%' THEN 'Shade / Color'
-        WHEN LOWER(${col}) LIKE '%buy%' OR LOWER(${col}) LIKE '%return%' OR LOWER(${col}) IN ('wasted purchase','bad','not smudge') THEN 'Dissatisfaction'
-        ELSE INITCAP(TRIM(LOWER(${col})))
-    END
-`;
-
 router.get('/dashboard-data', async (req, res) => {
     try {
-        const totalRes = await db.query(`SELECT COUNT(*) FROM feedback.reviews`);
+        const totalRes = await db.query(`SELECT COUNT(*) FROM feedback.complaints`);
         const totalComplaints = parseInt(totalRes.rows[0].count);
 
         const categoryRes = await db.query(`
-            SELECT 
-                ${CAT_NORMALIZE('comment_category')} AS complaint_category,
-                COUNT(*) AS count
-            FROM feedback.reviews
-            WHERE comment_category IS NOT NULL AND comment_category != ''
-              AND comment_category NOT ILIKE '%not available%'
-              AND comment_category NOT ILIKE '%review not available%'
+            SELECT complaint_category, COUNT(*) AS count
+            FROM feedback.complaints
+            WHERE complaint_category IS NOT NULL AND complaint_category != ''
             GROUP BY 1
             ORDER BY count DESC
             LIMIT 8
         `);
 
         const productRes = await db.query(`
-            SELECT p.product_name, COUNT(*) AS count
-            FROM feedback.reviews r
-            JOIN feedback.products p ON r.product_id = p.product_id
-            WHERE p.product_name IS NOT NULL
-            GROUP BY p.product_name
+            SELECT product_name, COUNT(*) AS count
+            FROM feedback.complaints
+            WHERE product_name IS NOT NULL
+            GROUP BY product_name
             ORDER BY count DESC
             LIMIT 10
         `);
 
         const sentimentRes = await db.query(`
-            SELECT 
-                CASE 
-                    WHEN sentiment ILIKE '%Positive%' THEN 'Positive'
-                    WHEN sentiment ILIKE '%Negative%' THEN 'Negative'
-                    ELSE 'Neutral'
-                END AS sentiment,
-                COUNT(*) AS count
-            FROM feedback.reviews
+            SELECT sentiment, COUNT(*) AS count
+            FROM feedback.complaints
             WHERE sentiment IS NOT NULL AND sentiment != ''
-              AND sentiment NOT ILIKE '%not available%'
             GROUP BY 1
         `);
 
         const trendRes = await db.query(`
-            SELECT DATE_TRUNC('month', comment_date) AS day, COUNT(*) AS count
-            FROM feedback.reviews
-            WHERE comment_date IS NOT NULL
+            SELECT DATE_TRUNC('month', date) AS day, COUNT(*) AS count
+            FROM feedback.complaints
+            WHERE date IS NOT NULL
             GROUP BY day
             ORDER BY day DESC
             LIMIT 12
         `);
 
-        const recurringRes = await db.query(`
-            SELECT p.product_name, 
-                ${CAT_NORMALIZE('r.comment_category')} AS complaint_category,
-                COUNT(*) AS count
-            FROM feedback.reviews r
-            JOIN feedback.products p ON r.product_id = p.product_id
-            WHERE p.product_name IS NOT NULL AND r.comment_category IS NOT NULL
-              AND r.comment_category NOT ILIKE '%not available%'
-              AND r.comment_category NOT ILIKE '%review not available%'
-            GROUP BY p.product_name, 2
-            ORDER BY count DESC
-            LIMIT 5
-        `);
-
         const recentRes = await db.query(`
-            SELECT 
-                p.product_name,
-                r.comment_category AS complaint_category,
-                CASE 
-                    WHEN r.sentiment ILIKE '%Positive%' THEN 'Positive'
-                    WHEN r.sentiment ILIKE '%Negative%' THEN 'Negative'
-                    ELSE 'Neutral'
-                END AS sentiment,
-                r.comment_date AS date
-            FROM feedback.reviews r
-            JOIN feedback.products p ON r.product_id = p.product_id
-            WHERE r.review_detail IS NOT NULL AND r.review_detail != ''
-            ORDER BY r.comment_date DESC
+            SELECT product_name, complaint_category, sentiment, date
+            FROM feedback.complaints
+            WHERE complaint_text IS NOT NULL AND complaint_text != ''
+            ORDER BY date DESC
             LIMIT 50
         `);
 
@@ -107,7 +56,6 @@ router.get('/dashboard-data', async (req, res) => {
             complaintsByProduct: productRes.rows,
             sentimentDistribution: sentimentRes.rows,
             trendOverTime: trendRes.rows.reverse(),
-            topRecurring: recurringRes.rows,
             recentComplaints: recentRes.rows
         });
 
@@ -121,13 +69,11 @@ router.get('/product-categories', async (req, res) => {
     try {
         const result = await db.query(`
             SELECT 
-                b.brand_name AS product_category,
-                COUNT(DISTINCT p.product_id) AS product_count,
-                COUNT(r.review_id) AS total_feedback
-            FROM feedback.brands b
-            JOIN feedback.products p ON p.brand_id = b.brand_id
-            LEFT JOIN feedback.reviews r ON r.product_id = p.product_id
-            GROUP BY b.brand_name
+                product_category,
+                COUNT(DISTINCT product_name) AS product_count,
+                COUNT(*) AS total_feedback
+            FROM feedback.complaints
+            GROUP BY product_category
             ORDER BY total_feedback DESC
         `);
         res.json(result.rows.map(r => ({
@@ -145,35 +91,27 @@ router.get('/products', async (req, res) => {
     try {
         const productStats = await db.query(`
             SELECT 
-                p.product_name,
-                b.brand_name AS product_category,
-                COUNT(r.review_id) AS total_complaints,
-                COUNT(CASE WHEN r.sentiment ILIKE '%Negative%' THEN 1 END) AS negative_count,
-                COUNT(CASE WHEN r.sentiment ILIKE '%Positive%' THEN 1 END) AS positive_count,
-                COUNT(CASE WHEN r.sentiment NOT ILIKE '%Negative%' AND r.sentiment NOT ILIKE '%Positive%' THEN 1 END) AS neutral_count,
-                ROUND(AVG(CASE 
-                    WHEN r.sentiment ILIKE '%Positive%' THEN 1
-                    WHEN r.sentiment ILIKE '%Negative%' THEN -1
-                    ELSE 0
-                END)::NUMERIC, 2) AS avg_sentiment_score
-            FROM feedback.products p
-            JOIN feedback.brands b ON p.brand_id = b.brand_id
-            LEFT JOIN feedback.reviews r ON r.product_id = p.product_id
-            GROUP BY p.product_name, b.brand_name
+                product_name,
+                product_category,
+                COUNT(*) AS total_complaints,
+                COUNT(CASE WHEN sentiment = 'Negative' THEN 1 END) AS negative_count,
+                COUNT(CASE WHEN sentiment = 'Positive' THEN 1 END) AS positive_count,
+                COUNT(CASE WHEN sentiment = 'Neutral' THEN 1 END) AS neutral_count,
+                ROUND(AVG(sentiment_score)::NUMERIC, 2) AS avg_sentiment_score
+            FROM feedback.complaints
+            GROUP BY product_name, product_category
             ORDER BY total_complaints DESC
         `);
 
         const topCategories = await db.query(`
-            SELECT p.product_name, ranked.comment_category AS top_category
+            SELECT product_name, ranked.complaint_category AS top_category
             FROM (
-                SELECT product_id, comment_category, COUNT(*) AS cnt,
-                       ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY COUNT(*) DESC) AS rn
-                FROM feedback.reviews
-                WHERE comment_category IS NOT NULL AND comment_category != ''
-                  AND comment_category NOT ILIKE '%not available%'
-                GROUP BY product_id, comment_category
+                SELECT product_name, complaint_category, COUNT(*) AS cnt,
+                       ROW_NUMBER() OVER (PARTITION BY product_name ORDER BY COUNT(*) DESC) AS rn
+                FROM feedback.complaints
+                WHERE complaint_category IS NOT NULL AND complaint_category != ''
+                GROUP BY product_name, complaint_category
             ) ranked
-            JOIN feedback.products p ON p.product_id = ranked.product_id
             WHERE ranked.rn = 1
         `);
 
@@ -208,80 +146,58 @@ router.get('/products/:productName', async (req, res) => {
 
         const summaryRes = await db.query(`
             SELECT 
-                COUNT(r.review_id) AS total,
-                COUNT(CASE WHEN r.sentiment ILIKE '%Positive%' THEN 1 END) AS positive_count,
-                COUNT(CASE WHEN r.sentiment ILIKE '%Negative%' THEN 1 END) AS negative_count,
-                COUNT(CASE WHEN r.sentiment NOT ILIKE '%Positive%' AND r.sentiment NOT ILIKE '%Negative%' THEN 1 END) AS neutral_count,
-                ROUND(AVG(CASE 
-                    WHEN r.sentiment ILIKE '%Positive%' THEN 1
-                    WHEN r.sentiment ILIKE '%Negative%' THEN -1
-                    ELSE 0
-                END)::NUMERIC, 2) AS avg_score,
-                -1 AS min_score,
-                1 AS max_score,
-                MAX(b.brand_name) AS product_category
-            FROM feedback.products p
-            JOIN feedback.brands b ON p.brand_id = b.brand_id
-            LEFT JOIN feedback.reviews r ON r.product_id = p.product_id
-            WHERE p.product_name = $1
+                COUNT(*) AS total,
+                COUNT(CASE WHEN sentiment = 'Positive' THEN 1 END) AS positive_count,
+                COUNT(CASE WHEN sentiment = 'Negative' THEN 1 END) AS negative_count,
+                COUNT(CASE WHEN sentiment = 'Neutral' THEN 1 END) AS neutral_count,
+                ROUND(AVG(sentiment_score)::NUMERIC, 2) AS avg_score,
+                MAX(product_category) AS product_category
+            FROM feedback.complaints
+            WHERE product_name = $1
         `, [productName]);
 
         const categoryRes = await db.query(`
             SELECT 
-                ${CAT_NORMALIZE('r.comment_category')} AS complaint_category,
+                complaint_category,
                 COUNT(*) AS count
-            FROM feedback.reviews r
-            JOIN feedback.products p ON r.product_id = p.product_id
-            WHERE p.product_name = $1
-              AND r.comment_category IS NOT NULL AND r.comment_category != ''
-              AND r.comment_category NOT ILIKE '%not available%'
-              AND r.comment_category NOT ILIKE '%review not available%'
+            FROM feedback.complaints
+            WHERE product_name = $1
+              AND complaint_category IS NOT NULL AND complaint_category != ''
             GROUP BY 1
-            HAVING COUNT(*) >= 3
             ORDER BY count DESC
         `, [productName]);
 
         const sentimentRes = await db.query(`
-            SELECT 
-                CASE 
-                    WHEN r.sentiment ILIKE '%Positive%' THEN 'Positive'
-                    WHEN r.sentiment ILIKE '%Negative%' THEN 'Negative'
-                    ELSE 'Neutral'
-                END AS sentiment,
-                COUNT(*) AS count
-            FROM feedback.reviews r
-            JOIN feedback.products p ON r.product_id = p.product_id
-            WHERE p.product_name = $1 AND r.sentiment IS NOT NULL
+            SELECT sentiment, COUNT(*) AS count
+            FROM feedback.complaints
+            WHERE product_name = $1 AND sentiment IS NOT NULL
             GROUP BY 1
         `, [productName]);
 
         const trendRes = await db.query(`
             SELECT 
-                TO_CHAR(DATE_TRUNC('month', r.comment_date), 'Mon YY') AS month,
-                DATE_TRUNC('month', r.comment_date) AS month_date,
+                TO_CHAR(DATE_TRUNC('month', date), 'Mon YY') AS month,
+                DATE_TRUNC('month', date) AS month_date,
                 COUNT(*) AS total,
-                COUNT(CASE WHEN r.sentiment ILIKE '%Positive%' THEN 1 END) AS positive,
-                COUNT(CASE WHEN r.sentiment ILIKE '%Negative%' THEN 1 END) AS negative,
-                COUNT(CASE WHEN r.sentiment NOT ILIKE '%Positive%' AND r.sentiment NOT ILIKE '%Negative%' THEN 1 END) AS neutral
-            FROM feedback.reviews r
-            JOIN feedback.products p ON r.product_id = p.product_id
-            WHERE p.product_name = $1 AND r.comment_date IS NOT NULL
-            GROUP BY DATE_TRUNC('month', r.comment_date)
+                COUNT(CASE WHEN sentiment = 'Positive' THEN 1 END) AS positive,
+                COUNT(CASE WHEN sentiment = 'Negative' THEN 1 END) AS negative,
+                COUNT(CASE WHEN sentiment = 'Neutral' THEN 1 END) AS neutral
+            FROM feedback.complaints
+            WHERE product_name = $1 AND date IS NOT NULL
+            GROUP BY DATE_TRUNC('month', date)
             ORDER BY month_date DESC
             LIMIT 12
         `, [productName]);
 
         const sourceRes = await db.query(`
             SELECT 
-                COALESCE(pl.platform_name, 'Unknown') AS source,
+                source,
                 COUNT(*) AS count,
-                COUNT(CASE WHEN r.sentiment ILIKE '%Positive%' THEN 1 END) AS positive,
-                COUNT(CASE WHEN r.sentiment ILIKE '%Negative%' THEN 1 END) AS negative
-            FROM feedback.reviews r
-            JOIN feedback.products p ON r.product_id = p.product_id
-            LEFT JOIN feedback.platforms pl ON r.platform_id = pl.platform_id
-            WHERE p.product_name = $1
-            GROUP BY pl.platform_name
+                COUNT(CASE WHEN sentiment = 'Positive' THEN 1 END) AS positive,
+                COUNT(CASE WHEN sentiment = 'Negative' THEN 1 END) AS negative
+            FROM feedback.complaints
+            WHERE product_name = $1
+            GROUP BY source
             ORDER BY count DESC
         `, [productName]);
 
@@ -291,54 +207,39 @@ router.get('/products/:productName', async (req, res) => {
         let extraWhere = '';
 
         if (sentimentFilter && sentimentFilter !== 'All') {
-            if (sentimentFilter === 'Positive') {
-                extraWhere += ` AND r.sentiment ILIKE '%Positive%'`;
-            } else if (sentimentFilter === 'Negative') {
-                extraWhere += ` AND r.sentiment ILIKE '%Negative%'`;
-            } else {
-                extraWhere += ` AND r.sentiment NOT ILIKE '%Positive%' AND r.sentiment NOT ILIKE '%Negative%'`;
-            }
+            extraWhere += ` AND sentiment = $${paramIdx}`;
+            queryParams.push(sentimentFilter);
+            paramIdx++;
         }
         if (categoryFilter && categoryFilter !== 'All') {
-            extraWhere += ` AND (${CAT_NORMALIZE('r.comment_category')}) = $${paramIdx}`;
+            extraWhere += ` AND complaint_category = $${paramIdx}`;
             queryParams.push(categoryFilter);
             paramIdx++;
         }
 
         const countRes = await db.query(`
             SELECT COUNT(*) AS total
-            FROM feedback.reviews r
-            JOIN feedback.products p ON r.product_id = p.product_id
-            WHERE p.product_name = $1
-              AND r.review_detail IS NOT NULL AND r.review_detail != ''
+            FROM feedback.complaints
+            WHERE product_name = $1
+              AND complaint_text IS NOT NULL AND complaint_text != ''
               ${extraWhere}
         `, queryParams);
         const totalFeedback = parseInt(countRes.rows[0].total);
 
         const feedbackRes = await db.query(`
             SELECT 
-                r.review_detail AS complaint_text,
-                ${CAT_NORMALIZE('r.comment_category')} AS complaint_category,
-                CASE 
-                    WHEN r.sentiment ILIKE '%Positive%' THEN 'Positive'
-                    WHEN r.sentiment ILIKE '%Negative%' THEN 'Negative'
-                    ELSE 'Neutral'
-                END AS sentiment,
-                CASE 
-                    WHEN r.sentiment ILIKE '%Positive%' THEN 1
-                    WHEN r.sentiment ILIKE '%Negative%' THEN -1
-                    ELSE 0
-                END AS sentiment_score,
-                r.comment_date AS date,
-                COALESCE(pl.platform_name, 'Unknown') AS source,
-                r.customer_name
-            FROM feedback.reviews r
-            JOIN feedback.products p ON r.product_id = p.product_id
-            LEFT JOIN feedback.platforms pl ON r.platform_id = pl.platform_id
-            WHERE p.product_name = $1
-              AND r.review_detail IS NOT NULL AND r.review_detail != ''
+                complaint_text,
+                complaint_category,
+                sentiment,
+                sentiment_score,
+                date,
+                source,
+                customer_name
+            FROM feedback.complaints
+            WHERE product_name = $1
+              AND complaint_text IS NOT NULL AND complaint_text != ''
               ${extraWhere}
-            ORDER BY r.comment_date DESC
+            ORDER BY date DESC
             LIMIT $${paramIdx} OFFSET $${paramIdx + 1}
         `, [...queryParams, limit, offset]);
 
@@ -350,8 +251,8 @@ router.get('/products/:productName', async (req, res) => {
                 negative_count: parseInt(summaryRes.rows[0]?.negative_count || 0),
                 neutral_count: parseInt(summaryRes.rows[0]?.neutral_count || 0),
                 avg_score: parseFloat(summaryRes.rows[0]?.avg_score || 0),
-                min_score: parseFloat(summaryRes.rows[0]?.min_score || -1),
-                max_score: parseFloat(summaryRes.rows[0]?.max_score || 1),
+                min_score: -1,
+                max_score: 1,
                 product_category: summaryRes.rows[0]?.product_category || 'Uncategorized'
             },
             categories: categoryRes.rows.map(r => ({ ...r, count: parseInt(r.count) })),
@@ -385,7 +286,7 @@ router.get('/products/:productName', async (req, res) => {
 
 router.get('/export', async (req, res) => {
     try {
-        const result = await db.query('SELECT * FROM complaints ORDER BY date DESC');
+        const result = await db.query('SELECT * FROM feedback.complaints ORDER BY date DESC');
         const rows = result.rows;
         if (rows.length === 0) return res.send('No data');
         
