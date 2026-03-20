@@ -32,13 +32,14 @@ router.post('/', upload.array('files', 50), async (req, res) => {
         }
 
         const source = req.body.source || 'Unknown'; // Default source if none provided in body
-        let totalSummary = { TotalReceived: 0, Ingested: 0, Ignored: 0, BySource: {}, BySentiment: {} };
+        let totalSummary = { TotalReceived: 0, Ingested: 0, Duplicates: 0, Ignored: 0, BySource: {}, BySentiment: {} };
 
         for (const file of req.files) {
             const result = await processFile(file.path, file.originalname, source);
             totalSummary.TotalReceived += result.TotalReceived;
-            totalSummary.Ingested += result.Ingested;
-            totalSummary.Ignored += result.Ignored;
+            totalSummary.Ingested     += result.Ingested;
+            totalSummary.Duplicates   += result.Duplicates || 0;
+            totalSummary.Ignored      += result.Ignored;
 
             for (const [key, value] of Object.entries(result.BySource)) {
                 totalSummary.BySource[key] = (totalSummary.BySource[key] || 0) + value;

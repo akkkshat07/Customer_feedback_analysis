@@ -1,27 +1,54 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
-    PieChart, Pie, Cell, LineChart, Line, Legend, AreaChart, Area
+    PieChart, Pie, Cell, LineChart, Line, Legend, AreaChart, Area, LabelList
 } from 'recharts';
 
-const COLORS = ['#0d968b', '#10b981', '#f59e0b', '#f43f5e', '#8b5cf6', '#ec4899', '#14b8a6'];
+const COLORS = ['#6C63FF', '#38B2AC', '#8B84FF', '#F43F5E', '#F59E0B'];
 const SENTIMENT_COLORS = {
-    'Positive': '#10b981',
-    'Neutral': '#94a3b8',
-    'Negative': '#f43f5e'
+    'Positive': '#38B2AC',
+    'Neutral': '#6B7280',
+    'Negative': '#F43F5E'
+};
+
+const DrillTooltip = ({ active, payload, label }) => {
+    if (!active || !payload?.length) return null;
+    const pos = payload.find(p => p.dataKey === 'positive')?.value || 0;
+    const neg = payload.find(p => p.dataKey === 'negative')?.value || 0;
+    const neu = payload.find(p => p.dataKey === 'neutral')?.value || 0;
+    const total = pos + neg + neu;
+    return (
+        <div className="bg-soft-bg shadow-extruded rounded-xl p-3 text-xs min-w-[130px]">
+            <p className="font-bold text-soft-fg mb-2">{label}</p>
+            <div className="space-y-1">
+                <div className="flex justify-between gap-4"><span className="text-emerald-600 font-semibold">Positive</span><span className="font-bold text-soft-fg">{pos}</span></div>
+                <div className="flex justify-between gap-4"><span className="text-rose-500 font-semibold">Negative</span><span className="font-bold text-soft-fg">{neg}</span></div>
+                <div className="flex justify-between gap-4"><span className="text-soft-muted">Neutral</span><span className="font-bold text-soft-fg">{neu}</span></div>
+                <div className="border-t border-soft-muted/20 pt-1 flex justify-between gap-4"><span className="text-soft-muted">Total</span><span className="font-bold text-soft-fg">{total}</span></div>
+            </div>
+        </div>
+    );
 };
 
 const Dashboard = () => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [yearlyData, setYearlyData] = useState([]);
+    const [monthlyData, setMonthlyData] = useState([]);
+    const [drillYear, setDrillYear] = useState(null);
+    const [drillLoading, setDrillLoading] = useState(false);
 
     useEffect(() => {
         const fetchData = async () => {
             try {
-                const res = await axios.get('/api/analytics/dashboard-data');
+                const [res, yearly] = await Promise.all([
+                    axios.get('/api/analytics/dashboard-data'),
+                    axios.get('/api/analytics/yearly-sentiment')
+                ]);
                 setData(res.data);
+                setYearlyData(yearly.data);
             } catch (err) {
                 console.error('Failed to fetch dashboard data', err);
                 setError('Failed to load analytics data. Is the backend running?');
@@ -32,20 +59,39 @@ const Dashboard = () => {
         fetchData();
     }, []);
 
+    const handleYearClick = useCallback(async (chartData) => {
+        const year = chartData?.activeLabel;
+        if (!year) return;
+        setDrillLoading(true);
+        setDrillYear(parseInt(year));
+        try {
+            const res = await axios.get(`/api/analytics/monthly-sentiment?year=${year}`);
+            setMonthlyData(res.data);
+        } catch (err) {
+            console.error('Failed to fetch monthly sentiment', err);
+        } finally {
+            setDrillLoading(false);
+        }
+    }, []);
+
     if (loading) {
         return (
-            <div className="flex flex-col items-center justify-center h-64 space-y-4">
-                <div className="w-12 h-12 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
-                <p className="text-slate-500 dark:text-slate-400 font-medium">Loading Analytics...</p>
+            <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
+                 <div className="w-12 h-12 rounded-2xl shadow-inset-deep flex items-center justify-center">
+                    <div className="w-6 h-6 border-4 border-soft-accent/20 border-t-soft-accent rounded-full animate-spin" />
+                 </div>
+                 <p className="text-sm font-bold text-soft-muted tracking-widest uppercase">Fetching Intelligence</p>
             </div>
         );
     }
 
     if (error) {
         return (
-            <div className="bg-rose-50 dark:bg-rose-900/30 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-400 px-6 py-4 rounded-xl flex items-center">
-                <span className="material-symbols-outlined mr-3">error</span>
-                <span className="font-medium">{error}</span>
+            <div className="p-8 flex justify-center">
+                <div className="card-neumorphic max-w-lg text-center">
+                    <span className="material-symbols-outlined text-rose-500 text-5xl mb-4">error</span>
+                    <p className="font-bold text-soft-fg">{error}</p>
+                </div>
             </div>
         );
     }
@@ -61,14 +107,13 @@ const Dashboard = () => {
     }));
 
     const trendData = data.trendOverTime.map(item => ({
-        date: new Date(item.day).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+        date: new Date(item.day).toLocaleDateString('en-US', { month: 'short' }),
         count: parseInt(item.count)
     }));
 
-    const isDark = document.documentElement.classList.contains('dark');
-    const tooltipBg = isDark ? '#1a2e2c' : '#ffffff';
-    const tooltipBorder = isDark ? 'rgba(13, 150, 139, 0.2)' : '#e2e8f0';
-    const textColor = isDark ? '#f8fafc' : '#0f172a';
+    const tooltipBg = '#E0E5EC';
+    const tooltipBorder = 'rgba(163,177,198,0.4)';
+    const textColor = '#3D4852';
 
     const posCount = data.sentimentDistribution.find(s => s.sentiment === 'Positive')?.count || 0;
     const negCount = data.sentimentDistribution.find(s => s.sentiment === 'Negative')?.count || 0;
@@ -77,85 +122,56 @@ const Dashboard = () => {
     const negPct = totalCount ? Math.round((negCount / totalCount) * 100) : 0;
 
     return (
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 space-y-6 md:space-y-8 bg-slate-50/50 dark:bg-background-dark/50 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto p-6 md:p-10 space-y-10 custom-scrollbar">
             {/* KPI Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                <div className="bg-white dark:bg-surface-dark p-6 rounded-xl border border-slate-200 dark:border-primary/10 shadow-sm transition-colors">
-                    <div className="flex justify-between items-start mb-4">
-                        <p className="text-sm font-medium text-slate-500 dark:text-primary/60">Total Complaints</p>
-                        <span className="text-primary text-xs font-bold bg-primary/10 px-2 py-0.5 rounded-full">All Time</span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+                {[
+                    { label: 'Total Reviews', value: data.totalComplaints, icon: 'list_alt', color: 'text-soft-fg' },
+                    { label: 'Positive Share', value: `${posPct}%`, icon: 'sentiment_satisfied', color: 'text-soft-accent-secondary' },
+                    { label: 'Critical Alert', value: `${negPct}%`, icon: 'sentiment_dissatisfied', color: 'text-rose-500' },
+                    { label: 'Primary Issue', value: categoryData[0]?.name || 'N/A', icon: 'category', color: 'text-soft-accent', small: true },
+                ].map((kpi, i) => (
+                    <div key={i} className="card-neumorphic !p-6 flex flex-col justify-between group">
+                        <div className="flex justify-between items-start mb-6">
+                            <p className="text-[10px] font-bold text-soft-muted uppercase tracking-widest">{kpi.label}</p>
+                            <div className="icon-well !w-10 !h-10 group-hover:scale-105 transition-transform duration-300">
+                                <span className={`material-symbols-outlined text-[20px] ${kpi.color}`}>{kpi.icon}</span>
+                            </div>
+                        </div>
+                        <h3 className={`${kpi.small ? 'text-lg' : 'text-3xl'} font-black text-soft-fg tracking-tighter truncate`}>{kpi.value}</h3>
                     </div>
-                    <div className="flex items-end justify-between">
-                        <h3 className="text-3xl font-bold">{data.totalComplaints}</h3>
-                        <span className="material-symbols-outlined text-primary text-3xl opacity-50">list_alt</span>
-                    </div>
-                </div>
-
-                <div className="bg-white dark:bg-surface-dark p-6 rounded-xl border border-slate-200 dark:border-primary/10 shadow-sm transition-colors">
-                    <div className="flex justify-between items-start mb-4">
-                        <p className="text-sm font-medium text-slate-500 dark:text-primary/60">Positive Sentiment</p>
-                        <span className="text-emerald-500 text-xs font-bold bg-emerald-500/10 px-2 py-0.5 rounded-full">Good</span>
-                    </div>
-                    <div className="flex items-end justify-between">
-                        <h3 className="text-3xl font-bold">{posPct}%</h3>
-                        <span className="material-symbols-outlined text-emerald-500 text-3xl opacity-50">sentiment_satisfied</span>
-                    </div>
-                </div>
-
-                <div className="bg-white dark:bg-surface-dark p-6 rounded-xl border border-slate-200 dark:border-primary/10 shadow-sm transition-colors">
-                    <div className="flex justify-between items-start mb-4">
-                        <p className="text-sm font-medium text-slate-500 dark:text-primary/60">Negative Sentiment</p>
-                        <span className="text-rose-500 text-xs font-bold bg-rose-500/10 px-2 py-0.5 rounded-full">Alert</span>
-                    </div>
-                    <div className="flex items-end justify-between">
-                        <h3 className="text-3xl font-bold">{negPct}%</h3>
-                        <span className="material-symbols-outlined text-rose-500 text-3xl opacity-50">sentiment_dissatisfied</span>
-                    </div>
-                </div>
-
-                <div className="bg-white dark:bg-surface-dark p-6 rounded-xl border border-slate-200 dark:border-primary/10 shadow-sm transition-colors">
-                    <div className="flex justify-between items-start mb-4">
-                        <p className="text-sm font-medium text-slate-500 dark:text-primary/60">Top Category</p>
-                        <span className="text-amber-500 text-xs font-bold bg-amber-500/10 px-2 py-0.5 rounded-full">Highest</span>
-                    </div>
-                    <div className="flex items-end justify-between">
-                        <h3 className="text-xl font-bold truncate pr-2" title={categoryData[0]?.name || 'N/A'}>
-                            {categoryData[0]?.name || 'N/A'}
-                        </h3>
-                        <span className="material-symbols-outlined text-amber-500 text-3xl opacity-50">category</span>
-                    </div>
-                </div>
+                ))}
             </div>
 
-            {/* Charts Middle Row */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="lg:col-span-2 bg-white dark:bg-surface-dark p-6 rounded-xl border border-slate-200 dark:border-primary/10 shadow-sm transition-colors">
-                    <div className="flex items-center justify-between mb-6">
-                        <h4 className="font-bold">Complaints Trend Over Time</h4>
+            {/* Charts Row */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div className="lg:col-span-2 card-neumorphic">
+                    <div className="flex items-center justify-between mb-8">
+                        <h4 className="text-xs font-bold uppercase tracking-[0.2em] text-soft-muted">Sentiment Trend Analysis</h4>
                     </div>
-                    <div className="h-[280px]">
-                        <ResponsiveContainer width="100%" height="100%">
+                    <div className="h-[300px]">
+                        <ResponsiveContainer width="100%" height="100%" debounce={50}>
                             <AreaChart data={trendData} margin={{ top: 5, right: 0, left: -20, bottom: 0 }}>
                                 <defs>
-                                    <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor="#0d968b" stopOpacity={0.3}/>
-                                        <stop offset="95%" stopColor="#0d968b" stopOpacity={0}/>
+                                    <linearGradient id="colorSoft" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="#6C63FF" stopOpacity={0.2}/>
+                                        <stop offset="95%" stopColor="#6C63FF" stopOpacity={0}/>
                                     </linearGradient>
                                 </defs>
-                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDark ? 'rgba(13, 150, 139, 0.1)' : '#f1f5f9'} />
-                                <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fill: isDark ? 'rgba(255,255,255,0.5)' : '#64748b', fontSize: 12 }} />
-                                <YAxis axisLine={false} tickLine={false} tick={{ fill: isDark ? 'rgba(255,255,255,0.5)' : '#64748b', fontSize: 12 }} />
-                                <RechartsTooltip contentStyle={{ borderRadius: '0.75rem', border: `1px solid ${tooltipBorder}`, backgroundColor: tooltipBg, color: textColor, boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                                <Area type="monotone" dataKey="count" stroke="#0d968b" strokeWidth={3} fillOpacity={1} fill="url(#colorCount)" />
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(163,177,198,0.2)" />
+                                <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fill: '#6B7280', fontSize: 10, fontWeight: 700 }} />
+                                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#6B7280', fontSize: 10, fontWeight: 700 }} />
+                                <RechartsTooltip contentStyle={{ borderRadius: '1rem', border: `none`, backgroundColor: tooltipBg, boxShadow: '9px 9px 16px rgb(163,177,198,0.6), -9px -9px 16px rgba(255,255,255,0.5)' }} />
+                                <Area type="monotone" dataKey="count" stroke="#6C63FF" strokeWidth={4} fillOpacity={1} fill="url(#colorSoft)" />
                             </AreaChart>
                         </ResponsiveContainer>
                     </div>
                 </div>
 
-                <div className="bg-white dark:bg-surface-dark p-6 rounded-xl border border-slate-200 dark:border-primary/10 shadow-sm transition-colors flex flex-col items-center">
-                    <h4 className="font-bold w-full text-left mb-6">Sentiment Breakdown</h4>
-                    <div className="h-[240px] w-full mt-4">
-                        <ResponsiveContainer width="100%" height="100%">
+                <div className="card-neumorphic flex flex-col items-center">
+                    <h4 className="text-xs font-bold uppercase tracking-[0.2em] text-soft-muted w-full mb-8">Volume Distribution</h4>
+                    <div className="h-[240px] w-full">
+                        <ResponsiveContainer width="100%" height="100%" debounce={50}>
                             <PieChart>
                                 <Pie
                                     data={sentimentData}
@@ -163,7 +179,7 @@ const Dashboard = () => {
                                     cy="50%"
                                     innerRadius={70}
                                     outerRadius={90}
-                                    paddingAngle={5}
+                                    paddingAngle={8}
                                     dataKey="value"
                                     stroke="none"
                                 >
@@ -171,15 +187,15 @@ const Dashboard = () => {
                                         <Cell key={`cell-${index}`} fill={SENTIMENT_COLORS[entry.name] || '#cbd5e1'} />
                                     ))}
                                 </Pie>
-                                <RechartsTooltip contentStyle={{ borderRadius: '0.75rem', border: `1px solid ${tooltipBorder}`, backgroundColor: tooltipBg, color: textColor, boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
+                                <RechartsTooltip contentStyle={{ borderRadius: '1rem', border: `none`, backgroundColor: tooltipBg, boxShadow: '9px 9px 16px rgb(163,177,198,0.6), -9px -9px 16px rgba(255,255,255,0.5)' }} />
                             </PieChart>
                         </ResponsiveContainer>
                     </div>
-                    <div className="grid grid-cols-3 gap-4 w-full text-center mt-2">
+                    <div className="grid grid-cols-3 gap-6 w-full mt-6">
                         {sentimentData.map((s, i) => (
-                            <div key={i}>
-                                <div className="text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wider">{s.name}</div>
-                                <div className="text-sm font-bold" style={{ color: SENTIMENT_COLORS[s.name] || '#94a3b8' }}>
+                            <div key={i} className="p-3 rounded-2xl shadow-inset-sm">
+                                <div className="text-[9px] font-bold text-soft-muted mb-1 uppercase tracking-widest">{s.name}</div>
+                                <div className="text-sm font-black" style={{ color: SENTIMENT_COLORS[s.name] || '#94a3b8' }}>
                                     {s.value}
                                 </div>
                             </div>
@@ -188,25 +204,88 @@ const Dashboard = () => {
                 </div>
             </div>
 
+            {/* Yearly / Monthly Drill-down Bar Chart */}
+            <div className="card-neumorphic">
+                <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
+                    <div>
+                        <h4 className="text-xs font-bold uppercase tracking-[0.2em] text-soft-muted">
+                            {drillYear ? `${drillYear} — Month by Month` : 'Reviews by Year'}
+                        </h4>
+                        {drillYear && (
+                            <p className="text-[10px] text-soft-muted mt-1">Click a month to go back, or use the button →</p>
+                        )}
+                    </div>
+                    <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-3 text-[11px]">
+                            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-emerald-500 inline-block"></span>Positive</span>
+                            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-rose-500 inline-block"></span>Negative</span>
+                            <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-slate-300 inline-block"></span>Neutral</span>
+                        </div>
+                        {drillYear && (
+                            <button onClick={() => { setDrillYear(null); setMonthlyData([]); }}
+                                className="flex items-center gap-1 text-xs font-bold text-soft-accent px-3 py-1.5 rounded-xl shadow-inset-sm hover:shadow-extruded-sm transition-all">
+                                <span className="material-symbols-outlined text-[14px]">arrow_back</span>
+                                All Years
+                            </button>
+                        )}
+                    </div>
+                </div>
+
+                <div className="h-[280px]">
+                    {drillLoading ? (
+                        <div className="flex items-center justify-center h-full">
+                            <div className="w-8 h-8 border-4 border-soft-accent/20 border-t-soft-accent rounded-full animate-spin"></div>
+                        </div>
+                    ) : (
+                        <ResponsiveContainer width="100%" height="100%" debounce={50}>
+                            <BarChart
+                                data={drillYear ? monthlyData : yearlyData}
+                                margin={{ top: 10, right: 10, left: -15, bottom: 0 }}
+                                onClick={!drillYear ? handleYearClick : undefined}
+                                style={{ cursor: drillYear ? 'default' : 'pointer' }}
+                            >
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(163,177,198,0.2)" />
+                                <XAxis
+                                    dataKey={drillYear ? 'month' : 'year'}
+                                    axisLine={false} tickLine={false}
+                                    tick={{ fill: '#6B7280', fontSize: 11, fontWeight: 700 }}
+                                />
+                                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#6B7280', fontSize: 10 }} />
+                                <RechartsTooltip content={<DrillTooltip />} cursor={{ fill: 'rgba(108,99,255,0.06)' }} />
+                                <Bar dataKey="positive" name="Positive" stackId="a" fill="#10b981" radius={[0,0,0,0]} maxBarSize={48} />
+                                <Bar dataKey="neutral"  name="Neutral"  stackId="a" fill="#cbd5e1" maxBarSize={48} />
+                                <Bar dataKey="negative" name="Negative" stackId="a" fill="#f43f5e" radius={[4,4,0,0]} maxBarSize={48} />
+                            </BarChart>
+                        </ResponsiveContainer>
+                    )}
+                </div>
+                {!drillYear && (
+                    <p className="text-center text-[10px] text-soft-muted mt-3 flex items-center justify-center gap-1">
+                        <span className="material-symbols-outlined text-[12px]">touch_app</span>
+                        Click any year bar to see its monthly breakdown
+                    </p>
+                )}
+            </div>
+
             {/* Bottom Row */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="bg-white dark:bg-surface-dark p-6 rounded-xl border border-slate-200 dark:border-primary/10 shadow-sm transition-colors">
-                    <h4 className="font-bold mb-5">Complaints by Category</h4>
-                    <div className="space-y-3">
-                        {categoryData.map((item, index) => {
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div className="card-neumorphic">
+                    <h4 className="text-xs font-bold uppercase tracking-[0.2em] text-soft-muted mb-8">Topic Prevalence</h4>
+                    <div className="space-y-6">
+                        {categoryData.slice(0, 6).map((item, index) => {
                             const pct = categoryData[0]?.count ? Math.round((item.count / categoryData[0].count) * 100) : 0;
                             return (
-                                <div key={index}>
-                                    <div className="flex items-center justify-between mb-1.5">
-                                        <div className="flex items-center gap-2">
-                                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: COLORS[index % COLORS.length] }}></span>
-                                            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{item.name}</span>
+                                <div key={index} className="group">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-3 h-3 rounded-full shadow-inset-sm shrink-0" style={{ background: COLORS[index % COLORS.length] }}></div>
+                                            <span className="text-sm font-bold text-soft-fg">{item.name}</span>
                                         </div>
-                                        <span className="text-sm font-bold text-slate-600 dark:text-slate-400">{item.count.toLocaleString()}</span>
+                                        <span className="text-xs font-black text-soft-muted">{item.count}</span>
                                     </div>
-                                    <div className="h-2 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
+                                    <div className="h-3 rounded-full shadow-inset overflow-hidden p-0.5">
                                         <div
-                                            className="h-full rounded-full transition-all duration-700"
+                                            className="h-full rounded-full transition-all duration-1000 shadow-extruded-sm"
                                             style={{ width: `${pct}%`, background: COLORS[index % COLORS.length] }}
                                         ></div>
                                     </div>
@@ -216,61 +295,45 @@ const Dashboard = () => {
                     </div>
                 </div>
 
-                <div className="bg-white dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-primary/10 shadow-sm overflow-hidden flex flex-col transition-colors">
-                    <div className="p-4 md:p-6 pb-2 flex justify-between items-center">
-                        <h4 className="font-bold">Recent Complaints</h4>
-                        <a href="/cfa/api/analytics/export" download className="text-xs font-semibold text-primary hover:underline">Export CSV</a>
+                <div className="card-neumorphic !p-0 overflow-hidden flex flex-col">
+                    <div className="p-8 pb-4 flex justify-between items-center">
+                        <h4 className="text-xs font-bold uppercase tracking-[0.2em] text-soft-muted">Recent Intelligence</h4>
+                        <div className="px-4 py-1.5 rounded-full shadow-inset-sm text-[10px] font-bold text-soft-accent uppercase tracking-widest cursor-pointer hover:shadow-inset transition-shadow">
+                            Export Intelligence
+                        </div>
                     </div>
-                    {/* Desktop table */}
-                    <div className="hidden sm:block overflow-auto flex-1 custom-scrollbar">
-                        <table className="w-full text-left border-collapse">
-                            <thead className="sticky top-0 bg-white dark:bg-surface-dark z-10">
-                                <tr className="text-[11px] font-bold text-slate-400 dark:text-primary/40 uppercase tracking-wider border-b border-slate-100 dark:border-primary/5">
-                                    <th className="px-6 py-4">Product</th>
-                                    <th className="px-6 py-4">Category</th>
-                                    <th className="px-6 py-4 text-right">Sentiment</th>
+                    
+                    <div className="overflow-auto flex-1 custom-scrollbar">
+                        <table className="w-full text-left">
+                            <thead>
+                                <tr className="text-[10px] font-bold text-soft-muted uppercase tracking-widest shadow-inset-sm">
+                                    <th className="px-8 py-4">Context</th>
+                                    <th className="px-8 py-4 text-right">Sentiment</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-slate-100 dark:divide-primary/5">
+                            <tbody className="divide-y divide-soft-muted/10">
                                 {data.recentComplaints.slice(0, 10).map((row, idx) => (
-                                    <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-primary/5 transition-colors">
-                                        <td className="px-6 py-4 text-sm font-medium truncate max-w-[150px]">{row.product_name}</td>
-                                        <td className="px-6 py-4 text-xs text-slate-500 dark:text-slate-400">{row.complaint_category}</td>
-                                        <td className="px-6 py-4 text-right">
-                                            {row.sentiment === 'Positive' && (
-                                                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Positive
-                                                </span>
-                                            )}
-                                            {row.sentiment === 'Negative' && (
-                                                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-600 dark:text-rose-400">
-                                                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span> Negative
-                                                </span>
-                                            )}
-                                            {row.sentiment === 'Neutral' && (
-                                                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-500/10 text-slate-600 dark:text-slate-400">
-                                                    <span className="w-1.5 h-1.5 rounded-full bg-slate-500"></span> Neutral
-                                                </span>
-                                            )}
+                                    <tr key={idx} className="hover:bg-soft-muted/5 transition-colors group">
+                                        <td className="px-8 py-4">
+                                            <p className="text-sm font-bold text-soft-fg truncate max-w-[200px]">{row.product_name}</p>
+                                            <p className="text-[10px] text-soft-muted font-bold uppercase mt-1 tracking-wider">{row.complaint_category}</p>
+                                        </td>
+                                        <td className="px-8 py-4 text-right">
+                                            <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest shadow-inset-sm ${
+                                                row.sentiment === 'Positive' ? 'text-soft-accent-secondary' : 
+                                                row.sentiment === 'Negative' ? 'text-rose-500' : 'text-soft-muted'
+                                            }`}>
+                                                <span className={`w-1.5 h-1.5 rounded-full ${
+                                                    row.sentiment === 'Positive' ? 'bg-soft-accent-secondary' : 
+                                                    row.sentiment === 'Negative' ? 'bg-rose-500' : 'bg-soft-muted'
+                                                }`}></span>
+                                                {row.sentiment}
+                                            </span>
                                         </td>
                                     </tr>
                                 ))}
                             </tbody>
                         </table>
-                    </div>
-                    {/* Mobile card list */}
-                    <div className="sm:hidden divide-y divide-slate-100 dark:divide-primary/5 flex-1">
-                        {data.recentComplaints.slice(0, 10).map((row, idx) => (
-                            <div key={idx} className="px-4 py-3 flex items-center justify-between gap-2">
-                                <div className="min-w-0">
-                                    <p className="text-sm font-medium truncate text-slate-800 dark:text-slate-200">{row.product_name}</p>
-                                    <p className="text-xs text-slate-400 mt-0.5">{row.complaint_category}</p>
-                                </div>
-                                {row.sentiment === 'Positive' && <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 shrink-0"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>Pos</span>}
-                                {row.sentiment === 'Negative' && <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-600 shrink-0"><span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>Neg</span>}
-                                {row.sentiment === 'Neutral' && <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-500/10 text-slate-500 shrink-0"><span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>Neu</span>}
-                            </div>
-                        ))}
                     </div>
                 </div>
             </div>

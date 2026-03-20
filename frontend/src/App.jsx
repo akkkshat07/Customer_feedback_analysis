@@ -21,10 +21,10 @@ const NavLink = ({ to, icon, children }) => {
   return (
     <Link
       to={to}
-      className={`flex items-center gap-2 px-3 py-2 rounded-lg font-medium transition-colors text-sm ${
+      className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold transition-all duration-300 text-sm ${
         isActive
-          ? 'bg-primary text-white shadow-md shadow-primary/20'
-          : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/[0.06]'
+          ? 'shadow-inset-sm text-soft-accent bg-soft-bg'
+          : 'text-soft-muted hover:text-soft-fg hover:shadow-extruded-sm active:shadow-inset-sm'
       }`}
     >
       <span className="material-symbols-outlined text-[20px]">{icon}</span>
@@ -37,19 +37,19 @@ const NavLink = ({ to, icon, children }) => {
 const MobileBottomNav = () => {
   const location = useLocation();
   return (
-    <nav className="md:hidden flex-shrink-0 bg-white dark:bg-[#05080f]/90 border-t border-slate-200 dark:border-white/[0.07] flex items-center justify-around px-1 py-2 z-50 backdrop-blur-md">
+    <nav className="md:hidden flex-shrink-0 bg-soft-bg/80 backdrop-blur-md shadow-extruded border-t border-transparent flex items-center justify-around px-2 py-3 z-50">
       {NAV_LINKS.map(({ to, icon, label }) => {
         const isActive = location.pathname === to;
         return (
           <Link
             key={to}
             to={to}
-            className={`flex flex-col items-center gap-0.5 flex-1 py-1 rounded-xl transition-colors ${
-              isActive ? 'text-primary' : 'text-slate-400 dark:text-slate-500'
+            className={`flex flex-col items-center gap-1 flex-1 py-2 rounded-2xl transition-all duration-300 ${
+              isActive ? 'shadow-inset-sm text-soft-accent' : 'text-soft-muted'
             }`}
           >
-            <span className={`material-symbols-outlined text-[22px] transition-all ${isActive ? 'text-primary scale-110' : ''}`}>{icon}</span>
-            <span className="text-[10px] font-semibold">{label}</span>
+            <span className={`material-symbols-outlined text-[22px] ${isActive ? 'scale-110' : ''}`}>{icon}</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider">{label}</span>
           </Link>
         );
       })}
@@ -58,8 +58,6 @@ const MobileBottomNav = () => {
 };
 
 function AppContent() {
-  const [darkMode, setDarkMode] = useState(false);
-
   useEffect(() => {
     if (!document.getElementById('material-icons-link')) {
       const link = document.createElement('link');
@@ -68,67 +66,24 @@ function AppContent() {
       link.href = 'https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap';
       document.head.appendChild(link);
     }
-    if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-      setDarkMode(true);
-      document.documentElement.classList.add('dark');
-    } else {
-      setDarkMode(false);
-      document.documentElement.classList.remove('dark');
-    }
+    // Force light mode theme
+    document.documentElement.classList.remove('dark');
   }, []);
 
-  const toggleDarkMode = () => {
-    if (darkMode) {
-      document.documentElement.classList.remove('dark');
-      localStorage.theme = 'light';
-      setDarkMode(false);
-    } else {
-      document.documentElement.classList.add('dark');
-      localStorage.theme = 'dark';
-      setDarkMode(true);
-    }
-  };
-
   return (
-    <>
-      {/* ── Dark-mode background orbs ───────────────────────────────────── */}
-      {darkMode && (
-        <div style={{ position:'fixed', inset:0, zIndex:0, pointerEvents:'none', overflow:'hidden' }}>
-          <div style={{
-            position:'absolute', width:500, height:500, borderRadius:'50%',
-            top:-160, left:-160,
-            background:'radial-gradient(circle, rgba(13,150,139,0.14) 0%, transparent 70%)',
-            filter:'blur(80px)', animation:'orb-drift 28s ease-in-out infinite'
-          }}/>
-          <div style={{
-            position:'absolute', width:440, height:440, borderRadius:'50%',
-            bottom:-120, right:-120,
-            background:'radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%)',
-            filter:'blur(80px)', animation:'orb-drift 28s ease-in-out infinite',
-            animationDelay:'-14s'
-          }}/>
-          <div style={{
-            position:'absolute', width:360, height:360, borderRadius:'50%',
-            top:'45%', left:'45%',
-            transform:'translate(-50%,-50%)',
-            background:'radial-gradient(circle, rgba(20,184,166,0.08) 0%, transparent 70%)',
-            filter:'blur(80px)', animation:'orb-drift 28s ease-in-out infinite',
-            animationDelay:'-7s'
-          }}/>
-        </div>
-      )}
-
-    <div className="relative z-10 flex flex-col h-[100dvh] font-display text-slate-900 dark:text-slate-100 bg-background-light dark:bg-transparent overflow-hidden">
+    <div className="relative z-10 flex flex-col h-[100dvh] font-body text-soft-fg bg-soft-bg overflow-hidden">
       {/* ── Top header ─────────────────────────────────────────────────── */}
-      <header className="h-14 md:h-16 flex items-center justify-between px-4 md:px-6 border-b border-slate-200 dark:border-white/[0.07] bg-white/80 dark:bg-[#05080f]/80 backdrop-blur-md z-20 flex-shrink-0">
+      <header className="h-16 md:h-20 flex items-center justify-between px-6 md:px-10 bg-soft-bg/80 backdrop-blur-md z-20 flex-shrink-0 shadow-extruded-sm">
         {/* Logo + brand */}
-        <div className="flex items-center gap-3 md:gap-6">
-          <div className="flex items-center gap-2 md:pr-6 md:border-r md:border-slate-200 dark:md:border-primary/20">
-            <img src="/cfa/Esme-Logo-01.webp" alt="Esme Logo" className="h-7 md:h-8 w-auto object-contain dark:brightness-200 dark:contrast-200" />
-            <span className="text-sm font-semibold text-slate-700 dark:text-slate-300 hidden sm:block">Customer Feedback Analysis</span>
+        <div className="flex items-center gap-4 md:gap-8">
+          <div className="flex items-center gap-3 md:pr-8 md:border-r border-transparent">
+             <div className="p-1.5 rounded-xl shadow-inset">
+                <img src="/cfa/Esme-Logo-01.webp" alt="Esme Logo" className="h-7 md:h-8 w-auto object-contain" />
+             </div>
+            <span className="text-sm font-extrabold text-soft-fg font-display tracking-tight hidden sm:block">Customer Intelligence</span>
           </div>
           {/* Desktop nav */}
-          <nav className="hidden md:flex items-center gap-1">
+          <nav className="hidden md:flex items-center gap-2">
             {NAV_LINKS.map(({ to, icon, label }) => (
               <NavLink key={to} to={to} icon={icon}>{label}</NavLink>
             ))}
@@ -136,25 +91,19 @@ function AppContent() {
         </div>
 
         {/* Right actions */}
-        <div className="flex items-center gap-2">
-          <button onClick={toggleDarkMode} className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-primary/10 transition-colors text-slate-500 dark:text-slate-400">
-            <span className="material-symbols-outlined text-[22px]">{darkMode ? 'light_mode' : 'dark_mode'}</span>
-          </button>
-          <div className="h-5 w-[1px] bg-slate-200 dark:bg-white/10 mx-1 hidden sm:block"></div>
-          <div className="flex items-center gap-2">
-            <div className="text-right hidden sm:block">
-              <p className="text-sm font-semibold leading-none">Administrator</p>
-              <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Admin</p>
-            </div>
-            <div className="w-8 h-8 rounded-full border-2 border-primary/30 flex items-center justify-center bg-primary/10 text-primary font-bold shadow-sm text-sm">
-              A
-            </div>
+        <div className="flex items-center gap-4">
+          <div className="hidden sm:flex flex-col items-end px-4 py-1.5 rounded-2xl shadow-inset-sm">
+              <p className="text-[10px] font-extrabold text-soft-fg uppercase tracking-widest leading-none">Administrator</p>
+              <p className="text-[9px] text-soft-accent font-bold mt-1">Super User</p>
+          </div>
+          <div className="w-10 h-10 rounded-2xl shadow-extruded flex items-center justify-center bg-soft-bg text-soft-accent font-black text-sm border-2 border-transparent">
+            A
           </div>
         </div>
       </header>
 
       {/* ── Page content ───────────────────────────────────────────────── */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-soft-bg">
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/products" element={<Products />} />
@@ -166,7 +115,6 @@ function AppContent() {
       {/* ── Mobile bottom navigation ───────────────────────────────────── */}
       <MobileBottomNav />
     </div>
-    </>
   );
 }
 

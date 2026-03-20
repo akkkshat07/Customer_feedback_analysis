@@ -89,7 +89,7 @@ You have direct access to a PostgreSQL database. Use ONLY the feedback schema:
 - feedback.products: product_id, product_name, brand_id, product_category
 - feedback.brands: brand_id, brand_name ('Blue Heaven', "Nature's Essence")
 - feedback.platforms: platform_id, platform_name ('Amazon', 'Nykaa')
-Total reviews: ~15,375. Always JOIN products and brands for product names.
+Total reviews: ~5,287. Always JOIN products and brands for product names.
 
 RESPONSE FORMATTING (STRICT):
 1. ALWAYS start with a 1-2 sentence executive summary.
@@ -161,6 +161,9 @@ router.post('/', async (req, res) => {
         }
 
         const finalText = responseCandidate.text();
+        if (!finalText?.trim()) {
+            return res.status(500).json({ error: 'AI returned an empty response. Please try again.' });
+        }
 
         // Update history
         history.push({ role: 'user', parts: [{ text: message }] });
@@ -171,7 +174,14 @@ router.post('/', async (req, res) => {
 
     } catch (error) {
         console.error('Chat error:', error.message);
-        res.status(500).json({ error: 'Failed to process: ' + error.message });
+        const msg = error.message?.includes('quota') || error.message?.includes('rate') || error.status === 429
+            ? 'AI rate limit reached. Please wait a moment and try again.'
+            : error.message?.includes('timeout') || error.code === 'ECONNABORTED'
+                ? 'AI service timed out. Please try again.'
+                : error.message?.includes('not found') || error.message?.includes('invalid')
+                    ? 'AI model error. Please try again.'
+                    : 'Failed to process your request. Please try again.';
+        res.status(500).json({ error: msg });
     }
 });
 

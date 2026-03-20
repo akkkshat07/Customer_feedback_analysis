@@ -4,24 +4,43 @@
 
 @layer base {
   body {
-    margin: 0;
-    font-family: 'Inter', sans-serif;
-    @apply bg-background-light text-slate-900 antialiased;
+    @apply bg-soft-bg text-soft-fg font-body;
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  h1, h2, h3, h4 {
+    @apply font-display tracking-tight;
+  }
+}
+
+@layer components {
+  .card-neumorphic {
+    @apply rounded-[32px] bg-soft-bg p-8 shadow-extruded transition-all duration-300 ease-out hover:-translate-y-1 hover:shadow-[12px_12px_20px_rgb(163,177,198,0.7),-12px_-12px_20px_rgba(255,255,255,0.6)];
   }
   
-  html.dark body {
-    @apply bg-background-dark text-slate-100;
+  .btn-neumorphic {
+    @apply px-6 py-3 rounded-2xl shadow-extruded transition-all duration-300 ease-out active:shadow-inset-sm active:translate-y-[0.5px] flex items-center gap-2 font-bold;
+  }
+  
+  .btn-primary {
+    @apply bg-soft-accent text-white hover:bg-soft-accent-light;
+  }
+  
+  .icon-well {
+    @apply w-12 h-12 rounded-2xl shadow-inset-deep flex items-center justify-center;
   }
 
-  /* Dark-mode animated background */
-  html.dark body::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    z-index: 0;
-    pointer-events: none;
-    background-image: radial-gradient(circle, rgba(255,255,255,0.028) 1px, transparent 1px);
-    background-size: 28px 28px;
+  .input-neumorphic {
+    @apply bg-soft-bg rounded-2xl px-4 py-3 shadow-inset focus:shadow-inset-deep outline-none border-none transition-shadow duration-300;
+  }
+
+  .floating {
+    animation: float 3s ease-in-out infinite;
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
   }
 }
 
@@ -32,22 +51,6 @@
   flex-direction: column;
 }
 
-@keyframes orb-drift {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  33%       { transform: translate(22px, -22px) scale(1.04); }
-  66%       { transform: translate(-16px, 16px) scale(0.97); }
-}
-
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-}
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(13, 150, 139, 0.2);
-  border-radius: 10px;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(13, 150, 139, 0.4);
-}
+.custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+.custom-scrollbar::-webkit-scrollbar-track { @apply bg-soft-bg; }
+.custom-scrollbar::-webkit-scrollbar-thumb { @apply bg-soft-muted/20 rounded-full hover:bg-soft-muted/30 transition-colors; }

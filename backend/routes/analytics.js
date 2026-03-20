@@ -117,6 +117,68 @@ router.get('/dashboard-data', async (req, res) => {
     }
 });
 
+// Yearly sentiment breakdown for dashboard drill-down chart
+router.get('/yearly-sentiment', async (req, res) => {
+    try {
+        const result = await db.query(`
+            SELECT
+                EXTRACT(YEAR FROM comment_date)::INT AS year,
+                COUNT(*) AS total,
+                COUNT(CASE WHEN sentiment ILIKE '%Positive%' THEN 1 END) AS positive,
+                COUNT(CASE WHEN sentiment ILIKE '%Negative%' THEN 1 END) AS negative,
+                COUNT(CASE WHEN sentiment NOT ILIKE '%Positive%' AND sentiment NOT ILIKE '%Negative%' THEN 1 END) AS neutral
+            FROM feedback.reviews
+            WHERE comment_date IS NOT NULL
+            GROUP BY 1
+            ORDER BY 1 ASC
+        `);
+        res.json(result.rows.map(r => ({
+            year: r.year,
+            total: parseInt(r.total),
+            positive: parseInt(r.positive),
+            negative: parseInt(r.negative),
+            neutral: parseInt(r.neutral)
+        })));
+    } catch (err) {
+        console.error('Error fetching yearly sentiment', err);
+        res.status(500).json({ error: 'Failed to fetch yearly sentiment' });
+    }
+});
+
+// Monthly sentiment breakdown for a given year
+router.get('/monthly-sentiment', async (req, res) => {
+    try {
+        const year = parseInt(req.query.year);
+        if (!year) return res.status(400).json({ error: 'year query param required' });
+
+        const result = await db.query(`
+            SELECT
+                TO_CHAR(DATE_TRUNC('month', comment_date), 'Mon') AS month,
+                EXTRACT(MONTH FROM comment_date)::INT AS month_num,
+                COUNT(*) AS total,
+                COUNT(CASE WHEN sentiment ILIKE '%Positive%' THEN 1 END) AS positive,
+                COUNT(CASE WHEN sentiment ILIKE '%Negative%' THEN 1 END) AS negative,
+                COUNT(CASE WHEN sentiment NOT ILIKE '%Positive%' AND sentiment NOT ILIKE '%Negative%' THEN 1 END) AS neutral
+            FROM feedback.reviews
+            WHERE comment_date IS NOT NULL
+              AND EXTRACT(YEAR FROM comment_date) = $1
+            GROUP BY 1, 2
+            ORDER BY 2 ASC
+        `, [year]);
+        res.json(result.rows.map(r => ({
+            month: r.month,
+            month_num: r.month_num,
+            total: parseInt(r.total),
+            positive: parseInt(r.positive),
+            negative: parseInt(r.negative),
+            neutral: parseInt(r.neutral)
+        })));
+    } catch (err) {
+        console.error('Error fetching monthly sentiment', err);
+        res.status(500).json({ error: 'Failed to fetch monthly sentiment' });
+    }
+});
+
 router.get('/product-categories', async (req, res) => {
     try {
         const result = await db.query(`
@@ -273,7 +335,7 @@ router.get('/products/:productName', async (req, res) => {
 
         const sourceRes = await db.query(`
             SELECT 
-                COALESCE(pl.platform_name, 'Unknown') AS source,
+                COALESCE(pl.platform_name, 'E-commerce') AS source,
                 COUNT(*) AS count,
                 COUNT(CASE WHEN r.sentiment ILIKE '%Positive%' THEN 1 END) AS positive,
                 COUNT(CASE WHEN r.sentiment ILIKE '%Negative%' THEN 1 END) AS negative
@@ -330,7 +392,7 @@ router.get('/products/:productName', async (req, res) => {
                     ELSE 0
                 END AS sentiment_score,
                 r.comment_date AS date,
-                COALESCE(pl.platform_name, 'Unknown') AS source,
+                COALESCE(pl.platform_name, 'E-commerce') AS source,
                 r.customer_name
             FROM feedback.reviews r
             JOIN feedback.products p ON r.product_id = p.product_id
@@ -380,6 +442,92 @@ router.get('/products/:productName', async (req, res) => {
     } catch (err) {
         console.error("Error fetching product details", err);
         res.status(500).json({ error: 'Failed to fetch product details' });
+    }
+});
+
+// Yearly drill-down: all years → months with sentiment counts for a product
+router.get('/products/:productName/yearly-drill', async (req, res) => {
+    try {
+        const { productName } = req.params;
+
+        const result = await db.query(`
+            SELECT
+                EXTRACT(YEAR FROM r.comment_date)::INT AS year,
+                TO_CHAR(DATE_TRUNC('month', r.comment_date), 'Mon YY') AS month_label,
+                DATE_TRUNC('month', r.comment_date) AS month_date,
+                EXTRACT(MONTH FROM r.comment_date)::INT AS month_num,
+                COUNT(*) AS total,
+                COUNT(CASE WHEN r.sentiment ILIKE '%Positive%' THEN 1 END) AS positive,
+                COUNT(CASE WHEN r.sentiment ILIKE '%Negative%' THEN 1 END) AS negative,
+                COUNT(CASE WHEN r.sentiment NOT ILIKE '%Positive%' AND r.sentiment NOT ILIKE '%Negative%' THEN 1 END) AS neutral
+            FROM feedback.reviews r
+            JOIN feedback.products p ON r.product_id = p.product_id
+            WHERE p.product_name = $1 AND r.comment_date IS NOT NULL
+            GROUP BY 1, 2, 3, 4
+            ORDER BY 1 DESC, 3 ASC
+        `, [productName]);
+
+        // Aggregate into { year, total, positive, negative, neutral, months: [...] }
+        const yearMap = {};
+        for (const row of result.rows) {
+            const y = row.year;
+            if (!yearMap[y]) yearMap[y] = { year: y, total: 0, positive: 0, negative: 0, neutral: 0, months: [] };
+            const t = parseInt(row.total), p = parseInt(row.positive), n = parseInt(row.negative), u = parseInt(row.neutral);
+            yearMap[y].total    += t;
+            yearMap[y].positive += p;
+            yearMap[y].negative += n;
+            yearMap[y].neutral  += u;
+            yearMap[y].months.push({ monthLabel: row.month_label, monthNum: row.month_num, total: t, positive: p, negative: n, neutral: u });
+        }
+
+        res.json(Object.values(yearMap));
+    } catch (err) {
+        console.error('Error fetching yearly drill', err);
+        res.status(500).json({ error: 'Failed to fetch yearly drill data' });
+    }
+});
+
+// Month drill-down: all reviews for a specific month label (e.g. "Mar 24")
+router.get('/products/:productName/month-reviews', async (req, res) => {
+    try {
+        const { productName } = req.params;
+        const { month } = req.query; // format: "Mar 24"
+
+        if (!month) return res.status(400).json({ error: 'month query param required' });
+
+        const result = await db.query(`
+            SELECT
+                r.review_detail AS complaint_text,
+                CASE
+                    WHEN r.sentiment ILIKE '%Positive%' THEN 'Positive'
+                    WHEN r.sentiment ILIKE '%Negative%' THEN 'Negative'
+                    ELSE 'Neutral'
+                END AS sentiment,
+                ${CAT_NORMALIZE('r.comment_category')} AS complaint_category,
+                r.comment_date AS date,
+                COALESCE(pl.platform_name, 'E-commerce') AS source,
+                r.customer_name
+            FROM feedback.reviews r
+            JOIN feedback.products p ON r.product_id = p.product_id
+            LEFT JOIN feedback.platforms pl ON r.platform_id = pl.platform_id
+            WHERE p.product_name = $1
+              AND TO_CHAR(DATE_TRUNC('month', r.comment_date), 'Mon YY') = $2
+              AND r.review_detail IS NOT NULL AND r.review_detail != ''
+            ORDER BY
+                CASE WHEN r.sentiment ILIKE '%Positive%' THEN 0
+                     WHEN r.sentiment ILIKE '%Negative%' THEN 1
+                     ELSE 2 END,
+                r.comment_date DESC
+        `, [productName, month]);
+
+        const positive = result.rows.filter(r => r.sentiment === 'Positive');
+        const negative = result.rows.filter(r => r.sentiment === 'Negative');
+        const neutral  = result.rows.filter(r => r.sentiment === 'Neutral');
+
+        res.json({ month, total: result.rows.length, positive, negative, neutral });
+    } catch (err) {
+        console.error('Error fetching month reviews', err);
+        res.status(500).json({ error: 'Failed to fetch month reviews' });
     }
 });
 
