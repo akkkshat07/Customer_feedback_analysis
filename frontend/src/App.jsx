@@ -6,7 +6,7 @@ import Upload from './pages/Upload';
 import Chatbot from './components/Chatbot';
 import axios from 'axios';
 
-axios.defaults.baseURL = '/cfa';
+// axios.defaults.baseURL = '/cfa';
 
 const NAV_LINKS = [
   { to: '/', icon: 'dashboard', label: 'Dashboard' },
